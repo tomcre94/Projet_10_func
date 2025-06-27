@@ -2,120 +2,240 @@ import logging
 import json
 import os
 import sys
-
-import logging
-import json
-import os
-import sys
+from typing import Optional, Dict, Any
 
 import azure.functions as func
-from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
+from azure.storage.blob import BlobServiceClient
+
+# Configuration du logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Ajouter le répertoire parent au PYTHONPATH pour importer recommendation_engine
-# Cela suppose que recommendation_engine et processed_data sont au même niveau que le dossier 'recommend'
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
+sys.path.insert(0, parent_dir)
 
-from recommendation_engine.recommender import RecommendationEngine
-from recommendation_engine.data_loader import DataLoader
-
-# Initialisation du moteur de recommandation en dehors de la fonction principale
-# pour optimiser le cold start.
-# Les chemins d'accès aux données doivent être relatifs au répertoire racine de l'application de fonction.
-# Assurez-vous que 'processed_data' est copié à la racine de l'application de fonction.
-recommender_engine = None
 try:
-    # Charger les données locales (articles_metadata, embeddings, data_summary)
-    data_path = os.path.join(parent_dir, 'processed_data')
-    logging.info(f"Attempting to load local data from: {data_path}")
-    data_loader = DataLoader(data_path)
-    articles_metadata = data_loader.load_articles_metadata()
-    embeddings = data_loader.load_embeddings()
-    data_summary = data_loader.load_data_summary()
+    from recommendation_engine.recommender import RecommendationEngine
+    from recommendation_engine.data_loader import DataLoader
+except ImportError as e:
+    logger.error(f"Failed to import recommendation modules: {e}")
+    RecommendationEngine = None
+    DataLoader = None
 
-    # Charger user_interactions depuis Azure Blob Storage
-    logging.info("Attempting to load user_interactions from Azure Blob Storage.")
-    connect_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-    container_name = "userinfosjson" # Nom du conteneur fourni par l'utilisateur
-    blob_name = "user_interactions.json"
+# Variable globale pour le moteur de recommandation
+recommender_engine: Optional[RecommendationEngine] = None
 
-    if not connect_str:
-        raise ValueError("AZURE_STORAGE_CONNECTION_STRING environment variable not set.")
-
-    blob_service_client = BlobServiceClient.from_connection_string(connect_str)
-    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-
-    # Télécharger le contenu du blob
-    blob_data = blob_client.download_blob().readall()
-    user_interactions = json.loads(blob_data)
-    logging.info("user_interactions loaded from Blob Storage successfully.")
-
-    recommender_engine = RecommendationEngine(
-        articles_metadata=articles_metadata,
-        user_interactions=user_interactions,
-        embeddings=embeddings,
-        data_summary=data_summary
-    )
-    logging.info("RecommendationEngine initialized successfully.")
-except Exception as e:
-    logging.error(f"Error initializing RecommendationEngine: {e}")
-    recommender_engine = None # Set to None to indicate failure
-
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
-
-@app.route(route="recommend", methods=["post"])
-def recommend(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('Python HTTP trigger function processed a request.')
-
-    if recommender_engine is None:
-        return func.HttpResponse(
-            "Internal server error: Recommendation engine not initialized.",
-            status_code=500
-        )
-
+def initialize_recommendation_engine() -> Optional[RecommendationEngine]:
+    """
+    Initialise le moteur de recommandation avec gestion d'erreurs robuste.
+    """
+    global recommender_engine
+    
+    if recommender_engine is not None:
+        return recommender_engine
+    
+    if RecommendationEngine is None or DataLoader is None:
+        logger.error("Recommendation modules not available")
+        return None
+    
     try:
-        req_body = req.get_json()
-    except ValueError:
-        return func.HttpResponse(
-             "Please pass a JSON body in the request.",
-             status_code=400
+        # Charger les données locales
+        data_path = os.path.join(parent_dir, 'processed_data')
+        logger.info(f"Loading local data from: {data_path}")
+        
+        if not os.path.exists(data_path):
+            logger.error(f"Data path does not exist: {data_path}")
+            return None
+        
+        data_loader = DataLoader(data_path)
+        articles_metadata = data_loader.load_articles_metadata()
+        embeddings = data_loader.load_embeddings()
+        data_summary = data_loader.load_data_summary()
+        
+        # Charger user_interactions depuis Azure Blob Storage
+        user_interactions = load_user_interactions_from_blob()
+        if user_interactions is None:
+            logger.error("Failed to load user interactions from blob storage")
+            return None
+        
+        # Initialiser le moteur de recommandation
+        recommender_engine = RecommendationEngine(
+            articles_metadata=articles_metadata,
+            user_interactions=user_interactions,
+            embeddings=embeddings,
+            data_summary=data_summary
         )
+        
+        logger.info("RecommendationEngine initialized successfully")
+        return recommender_engine
+        
+    except Exception as e:
+        logger.error(f"Error initializing RecommendationEngine: {e}", exc_info=True)
+        return None
 
+def load_user_interactions_from_blob() -> Optional[Dict[str, Any]]:
+    """
+    Charge les interactions utilisateur depuis Azure Blob Storage.
+    """
+    try:
+        connect_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+        if not connect_str:
+            logger.error("AZURE_STORAGE_CONNECTION_STRING environment variable not set")
+            return None
+        
+        container_name = "userinfosjson"
+        blob_name = "user_interactions.json"
+        
+        logger.info(f"Loading user interactions from blob: {container_name}/{blob_name}")
+        
+        blob_service_client = BlobServiceClient.from_connection_string(connect_str)
+        blob_client = blob_service_client.get_blob_client(
+            container=container_name, 
+            blob=blob_name
+        )
+        
+        # Télécharger et parser le JSON
+        blob_data = blob_client.download_blob().readall()
+        user_interactions = json.loads(blob_data.decode('utf-8'))
+        
+        logger.info("User interactions loaded successfully from Blob Storage")
+        return user_interactions
+        
+    except Exception as e:
+        logger.error(f"Error loading user interactions from blob: {e}", exc_info=True)
+        return None
+
+def validate_request_body(req_body: Dict[str, Any]) -> tuple[Optional[int], Optional[int], Optional[str]]:
+    """
+    Valide et convertit les paramètres de la requête.
+    
+    Returns:
+        tuple: (user_id, n_recommendations, error_message)
+    """
+    if not req_body:
+        return None, None, "Request body is empty"
+    
     user_id = req_body.get('user_id')
     n_recommendations = req_body.get('n_recommendations')
-
-    if user_id is None or n_recommendations is None:
-        return func.HttpResponse(
-             "Please pass 'user_id' and 'n_recommendations' in the request body.",
-             status_code=400
-        )
-
+    
+    if user_id is None:
+        return None, None, "Missing 'user_id' in request body"
+    
+    if n_recommendations is None:
+        return None, None, "Missing 'n_recommendations' in request body"
+    
     try:
         user_id = int(user_id)
         n_recommendations = int(n_recommendations)
-    except ValueError:
-        return func.HttpResponse(
-             "Invalid input: 'user_id' and 'n_recommendations' must be integers.",
-             status_code=400
-        )
+    except (ValueError, TypeError):
+        return None, None, "'user_id' and 'n_recommendations' must be valid integers"
+    
+    if user_id <= 0:
+        return None, None, "'user_id' must be a positive integer"
+    
+    if n_recommendations <= 0 or n_recommendations > 100:
+        return None, None, "'n_recommendations' must be between 1 and 100"
+    
+    return user_id, n_recommendations, None
 
-    try:
-        recommendations = recommender_engine.get_recommendations(user_id, n_recommendations)
+# Initialisation de l'application Azure Functions
+app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+
+@app.route(route="recommend", methods=["POST"])
+def recommend(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Endpoint pour obtenir des recommandations pour un utilisateur.
+    
+    Expected JSON body:
+    {
+        "user_id": int,
+        "n_recommendations": int
+    }
+    """
+    logger.info('Processing recommendation request')
+    
+    # Initialiser le moteur de recommandation si nécessaire
+    engine = initialize_recommendation_engine()
+    if engine is None:
+        logger.error("Recommendation engine not available")
         return func.HttpResponse(
-            json.dumps(recommendations),
+            json.dumps({
+                "error": "Recommendation service temporarily unavailable",
+                "message": "The recommendation engine could not be initialized"
+            }),
+            mimetype="application/json",
+            status_code=503
+        )
+    
+    # Parser le JSON de la requête
+    try:
+        req_body = req.get_json()
+    except Exception as e:
+        logger.warning(f"Invalid JSON in request: {e}")
+        return func.HttpResponse(
+            json.dumps({
+                "error": "Invalid JSON",
+                "message": "Please provide a valid JSON body"
+            }),
+            mimetype="application/json",
+            status_code=400
+        )
+    
+    # Valider les paramètres
+    user_id, n_recommendations, error_message = validate_request_body(req_body)
+    if error_message:
+        logger.warning(f"Request validation failed: {error_message}")
+        return func.HttpResponse(
+            json.dumps({
+                "error": "Invalid request",
+                "message": error_message
+            }),
+            mimetype="application/json",
+            status_code=400
+        )
+    
+    # Générer les recommandations
+    try:
+        logger.info(f"Generating {n_recommendations} recommendations for user {user_id}")
+        recommendations = engine.get_recommendations(user_id, n_recommendations)
+        
+        response_data = {
+            "user_id": user_id,
+            "n_recommendations": n_recommendations,
+            "recommendations": recommendations,
+            "status": "success"
+        }
+        
+        logger.info(f"Successfully generated recommendations for user {user_id}")
+        return func.HttpResponse(
+            json.dumps(response_data),
             mimetype="application/json",
             status_code=200
         )
+        
     except ValueError as ve:
-        logging.warning(f"Recommendation error: {ve}")
+        # Erreur métier (utilisateur non trouvé, etc.)
+        logger.warning(f"Business logic error for user {user_id}: {ve}")
         return func.HttpResponse(
-            str(ve),
-            status_code=404 # User not found or similar data-related error
+            json.dumps({
+                "error": "User not found",
+                "message": str(ve),
+                "user_id": user_id
+            }),
+            mimetype="application/json",
+            status_code=404
         )
+        
     except Exception as e:
-        logging.error(f"An unexpected error occurred: {e}")
+        # Erreur technique inattendue
+        logger.error(f"Unexpected error processing recommendations for user {user_id}: {e}", exc_info=True)
         return func.HttpResponse(
-            "An unexpected error occurred during recommendation processing.",
+            json.dumps({
+                "error": "Internal server error",
+                "message": "An unexpected error occurred while processing your request"
+            }),
+            mimetype="application/json",
             status_code=500
         )
