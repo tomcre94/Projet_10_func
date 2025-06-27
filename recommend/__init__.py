@@ -5,27 +5,93 @@ import sys
 from typing import Optional, Dict, Any
 
 import azure.functions as func
-from azure.storage.blob import BlobServiceClient
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Ajouter le répertoire parent au PYTHONPATH pour importer recommendation_engine
+# Ajouter le répertoire parent au PYTHONPATH
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
 
+# Import conditionnel des modules
 try:
     from recommendation_engine.recommender import RecommendationEngine
     from recommendation_engine.data_loader import DataLoader
+    RECOMMENDATION_MODULES_AVAILABLE = True
+    logger.info("Recommendation modules imported successfully")
 except ImportError as e:
-    logger.error(f"Failed to import recommendation modules: {e}")
+    logger.error(f"Recommendation modules not available: {e}")
     RecommendationEngine = None
     DataLoader = None
+    RECOMMENDATION_MODULES_AVAILABLE = False
+
+# Import conditionnel d'Azure Storage
+try:
+    from azure.storage.blob import BlobServiceClient
+    AZURE_STORAGE_AVAILABLE = True
+    logger.info("Azure Storage Blob module imported successfully")
+except ImportError as e:
+    logger.error(f"Azure Storage Blob module not available: {e}")
+    BlobServiceClient = None
+    AZURE_STORAGE_AVAILABLE = False
 
 # Variable globale pour le moteur de recommandation
 recommender_engine: Optional[RecommendationEngine] = None
+
+def load_user_interactions_from_file() -> Optional[Dict[str, Any]]:
+    """
+    Charge les interactions utilisateur depuis un fichier local (fallback).
+    """
+    try:
+        file_path = os.path.join(parent_dir, 'processed_data', 'user_interactions.json')
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                user_interactions = json.load(f)
+            logger.info("User interactions loaded from local file")
+            return user_interactions
+        else:
+            logger.warning(f"Local user interactions file not found: {file_path}")
+            return {}
+    except Exception as e:
+        logger.error(f"Error loading user interactions from file: {e}")
+        return {}
+
+def load_user_interactions_from_blob() -> Optional[Dict[str, Any]]:
+    """
+    Charge les interactions utilisateur depuis Azure Blob Storage.
+    """
+    if not AZURE_STORAGE_AVAILABLE:
+        logger.warning("Azure Storage not available, trying local file fallback")
+        return load_user_interactions_from_file()
+        
+    try:
+        connect_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+        if not connect_str:
+            logger.warning("AZURE_STORAGE_CONNECTION_STRING not set, using local file fallback")
+            return load_user_interactions_from_file()
+        
+        container_name = "userinfosjson"
+        blob_name = "user_interactions.json"
+        
+        logger.info(f"Loading user interactions from blob: {container_name}/{blob_name}")
+        
+        blob_service_client = BlobServiceClient.from_connection_string(connect_str)
+        blob_client = blob_service_client.get_blob_client(
+            container=container_name, 
+            blob=blob_name
+        )
+        
+        blob_data = blob_client.download_blob().readall()
+        user_interactions = json.loads(blob_data.decode('utf-8'))
+        
+        logger.info("User interactions loaded successfully from Blob Storage")
+        return user_interactions
+        
+    except Exception as e:
+        logger.warning(f"Error loading from blob, using local fallback: {e}")
+        return load_user_interactions_from_file()
 
 def initialize_recommendation_engine() -> Optional[RecommendationEngine]:
     """
@@ -36,12 +102,11 @@ def initialize_recommendation_engine() -> Optional[RecommendationEngine]:
     if recommender_engine is not None:
         return recommender_engine
     
-    if RecommendationEngine is None or DataLoader is None:
+    if not RECOMMENDATION_MODULES_AVAILABLE:
         logger.error("Recommendation modules not available")
         return None
     
     try:
-        # Charger les données locales
         data_path = os.path.join(parent_dir, 'processed_data')
         logger.info(f"Loading local data from: {data_path}")
         
@@ -54,13 +119,12 @@ def initialize_recommendation_engine() -> Optional[RecommendationEngine]:
         embeddings = data_loader.load_embeddings()
         data_summary = data_loader.load_data_summary()
         
-        # Charger user_interactions depuis Azure Blob Storage
+        # Charger user_interactions (avec fallback)
         user_interactions = load_user_interactions_from_blob()
         if user_interactions is None:
-            logger.error("Failed to load user interactions from blob storage")
+            logger.error("Failed to load user interactions")
             return None
         
-        # Initialiser le moteur de recommandation
         recommender_engine = RecommendationEngine(
             articles_metadata=articles_metadata,
             user_interactions=user_interactions,
@@ -75,44 +139,9 @@ def initialize_recommendation_engine() -> Optional[RecommendationEngine]:
         logger.error(f"Error initializing RecommendationEngine: {e}", exc_info=True)
         return None
 
-def load_user_interactions_from_blob() -> Optional[Dict[str, Any]]:
-    """
-    Charge les interactions utilisateur depuis Azure Blob Storage.
-    """
-    try:
-        connect_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-        if not connect_str:
-            logger.error("AZURE_STORAGE_CONNECTION_STRING environment variable not set")
-            return None
-        
-        container_name = "userinfosjson"
-        blob_name = "user_interactions.json"
-        
-        logger.info(f"Loading user interactions from blob: {container_name}/{blob_name}")
-        
-        blob_service_client = BlobServiceClient.from_connection_string(connect_str)
-        blob_client = blob_service_client.get_blob_client(
-            container=container_name, 
-            blob=blob_name
-        )
-        
-        # Télécharger et parser le JSON
-        blob_data = blob_client.download_blob().readall()
-        user_interactions = json.loads(blob_data.decode('utf-8'))
-        
-        logger.info("User interactions loaded successfully from Blob Storage")
-        return user_interactions
-        
-    except Exception as e:
-        logger.error(f"Error loading user interactions from blob: {e}", exc_info=True)
-        return None
-
 def validate_request_body(req_body: Dict[str, Any]) -> tuple[Optional[int], Optional[int], Optional[str]]:
     """
     Valide et convertit les paramètres de la requête.
-    
-    Returns:
-        tuple: (user_id, n_recommendations, error_message)
     """
     if not req_body:
         return None, None, "Request body is empty"
@@ -147,37 +176,41 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 def recommend(req: func.HttpRequest) -> func.HttpResponse:
     """
     Endpoint pour obtenir des recommandations pour un utilisateur.
-    
-    Expected JSON body:
-    {
-        "user_id": int,
-        "n_recommendations": int
-    }
     """
     logger.info('Processing recommendation request')
     
-    # Initialiser le moteur de recommandation si nécessaire
-    engine = initialize_recommendation_engine()
-    if engine is None:
-        logger.error("Recommendation engine not available")
+    # Vérification des modules requis
+    if not RECOMMENDATION_MODULES_AVAILABLE:
         return func.HttpResponse(
             json.dumps({
-                "error": "Recommendation service temporarily unavailable",
-                "message": "The recommendation engine could not be initialized"
+                "error": "Service unavailable", 
+                "message": "Recommendation modules not available"
             }),
             mimetype="application/json",
             status_code=503
         )
     
-    # Parser le JSON de la requête
+    # Initialiser le moteur de recommandation
+    engine = initialize_recommendation_engine()
+    if engine is None:
+        return func.HttpResponse(
+            json.dumps({
+                "error": "Service unavailable",
+                "message": "Recommendation engine could not be initialized"
+            }),
+            mimetype="application/json",
+            status_code=503
+        )
+    
+    # Parser le JSON
     try:
         req_body = req.get_json()
     except Exception as e:
-        logger.warning(f"Invalid JSON in request: {e}")
+        logger.warning(f"Invalid JSON: {e}")
         return func.HttpResponse(
             json.dumps({
                 "error": "Invalid JSON",
-                "message": "Please provide a valid JSON body"
+                "message": "Please provide valid JSON body"
             }),
             mimetype="application/json",
             status_code=400
@@ -186,7 +219,6 @@ def recommend(req: func.HttpRequest) -> func.HttpResponse:
     # Valider les paramètres
     user_id, n_recommendations, error_message = validate_request_body(req_body)
     if error_message:
-        logger.warning(f"Request validation failed: {error_message}")
         return func.HttpResponse(
             json.dumps({
                 "error": "Invalid request",
@@ -198,26 +230,21 @@ def recommend(req: func.HttpRequest) -> func.HttpResponse:
     
     # Générer les recommandations
     try:
-        logger.info(f"Generating {n_recommendations} recommendations for user {user_id}")
         recommendations = engine.get_recommendations(user_id, n_recommendations)
         
-        response_data = {
-            "user_id": user_id,
-            "n_recommendations": n_recommendations,
-            "recommendations": recommendations,
-            "status": "success"
-        }
-        
-        logger.info(f"Successfully generated recommendations for user {user_id}")
         return func.HttpResponse(
-            json.dumps(response_data),
+            json.dumps({
+                "user_id": user_id,
+                "n_recommendations": n_recommendations,
+                "recommendations": recommendations,
+                "status": "success",
+                "azure_storage_used": AZURE_STORAGE_AVAILABLE
+            }),
             mimetype="application/json",
             status_code=200
         )
         
     except ValueError as ve:
-        # Erreur métier (utilisateur non trouvé, etc.)
-        logger.warning(f"Business logic error for user {user_id}: {ve}")
         return func.HttpResponse(
             json.dumps({
                 "error": "User not found",
@@ -229,12 +256,11 @@ def recommend(req: func.HttpRequest) -> func.HttpResponse:
         )
         
     except Exception as e:
-        # Erreur technique inattendue
-        logger.error(f"Unexpected error processing recommendations for user {user_id}: {e}", exc_info=True)
+        logger.error(f"Unexpected error: {e}", exc_info=True)
         return func.HttpResponse(
             json.dumps({
                 "error": "Internal server error",
-                "message": "An unexpected error occurred while processing your request"
+                "message": "An unexpected error occurred"
             }),
             mimetype="application/json",
             status_code=500
