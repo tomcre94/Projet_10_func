@@ -65,7 +65,7 @@ jobs:
         uses: azure/appservice-settings@v1
         with:
           app-name: 'Projet10func'
-          app-settings-json: '[{"name":"WEBSITE_PYTHON_VERSION", "value":"3.11"}]'
+          app-settings-json: '[{"name":"WEBSITE_PYTHON_VERSION", "value":"3.12"}]'
 
       - name: Login to Azure
         uses: azure/login@v2
