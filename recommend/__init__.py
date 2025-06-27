@@ -9,7 +9,7 @@ import os
 import sys
 
 import azure.functions as func
-from azure.storage.blob import BlobServiceClient
+from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 
 # Ajouter le répertoire parent au PYTHONPATH pour importer recommendation_engine
 # Cela suppose que recommendation_engine et processed_data sont au même niveau que le dossier 'recommend'
