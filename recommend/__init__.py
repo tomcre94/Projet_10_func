@@ -169,11 +169,7 @@ def validate_request_body(req_body: Dict[str, Any]) -> tuple[Optional[int], Opti
     
     return user_id, n_recommendations, None
 
-# Initialisation de l'application Azure Functions
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
-
-@app.route(route="recommend", methods=["POST"])
-def main(req):
+def main(req: func.HttpRequest) -> func.HttpResponse:
     """
     Endpoint pour obtenir des recommandations pour un utilisateur.
     """
