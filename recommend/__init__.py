@@ -173,7 +173,7 @@ def validate_request_body(req_body: Dict[str, Any]) -> tuple[Optional[int], Opti
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 @app.route(route="recommend", methods=["POST"])
-def recommend(req: func.HttpRequest) -> func.HttpResponse:
+def main(req: func.HttpRequest) -> func.HttpResponse:
     """
     Endpoint pour obtenir des recommandations pour un utilisateur.
     """

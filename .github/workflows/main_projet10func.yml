@@ -30,7 +30,7 @@ jobs:
           python -m venv venv
           source venv/bin/activate
           rm -rf .python_packages # Supprimer le dossier .python_packages
-          pip install -r requirements.txt
+          pip install -r requirements.txt --target=/home/runner/work/Projet_10_func/Projet_10_func/.python_packages/lib/site-packages
 
       # Optional: Add step to run tests here
 
@@ -61,10 +61,11 @@ jobs:
       - name: Unzip artifact for deployment
         run: unzip release.zip
 
-      - name: Remove existing files
-        run: |
-          echo "Removing existing files from deployment directory..."
-          rm -rf /home/site/wwwroot/*
+      - name: Set Python version (for Azure Functions)
+        uses: azure/appservice-settings@v1
+        with:
+          app-name: 'Projet10func'
+          app-settings-json: '[{"name":"WEBSITE_PYTHON_VERSION", "value":"3.11"}]'
 
       - name: Login to Azure
         uses: azure/login@v2
