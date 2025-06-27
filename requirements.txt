@@ -6,8 +6,6 @@ fastapi
 uvicorn
 streamlit
 requests
-azure-functions>=1.18.0
+azure-functions
 azure-storage-blob>=12.19.0
 pandas
-
-
