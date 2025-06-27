@@ -8,4 +8,5 @@ fastapi
 uvicorn
 streamlit
 requests
+azure-functions
 azure-storage-blob
