@@ -25,6 +25,9 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Check Python version
+        run: python --version
+
       - name: Create virtual environment and install dependencies
         run: |
           python -m venv venv
