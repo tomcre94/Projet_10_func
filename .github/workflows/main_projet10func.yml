@@ -1,3 +1,7 @@
+# Docs for the Azure Web Apps Deploy action: https://github.com/azure/functions-action
+# More GitHub Actions for Azure: https://github.com/Azure/actions
+# More info on Python, GitHub Actions, and Azure Functions: https://aka.ms/python-webapps-actions
+
 name: Build and deploy Python project to Azure Function App - Projet10func
 
 on:
@@ -25,15 +29,13 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Check Python version
-        run: python --version
-
-      - name: Create virtual environment and install dependencies
+      - name: Create and start virtual environment
         run: |
           python -m venv venv
           source venv/bin/activate
-          rm -rf .python_packages # Supprimer le dossier .python_packages
-          pip install -r requirements.txt --target=/home/runner/work/Projet_10_func/Projet_10_func/.python_packages/lib/site-packages
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
       # Optional: Add step to run tests here
 
@@ -56,20 +58,20 @@ jobs:
       contents: read #This is required for actions/checkout
 
     steps:
-      - name: Download artifact
+      - name: Download artifact from build job
         uses: actions/download-artifact@v4
         with:
           name: python-app
 
       - name: Unzip artifact for deployment
-        run: unzip release.zip
-
+        run: unzip release.zip     
+        
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_251C896F3EA94BACBF682EDC84DDBE44 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_CC31537C36FA451F89066DBEFC22C7DB }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_7D8B5094C65F47A99E56F3E2CF8A62E6 }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_F8FEDC3DBC454EF19A34140076699FF2 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_E106208AE6AB42798D954292994AAF7C }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_EA71B0A2ECDF4C27B0C86B1DA6CD97C5 }}
 
       - name: 'Deploy to Azure Functions'
         uses: Azure/functions-action@v1
@@ -78,3 +80,4 @@ jobs:
           app-name: 'Projet10func'
           slot-name: 'Production'
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+          
