@@ -5,17 +5,19 @@ from typing import List, Dict
 from .utils import calculate_cosine_similarity, normalize_scores, filter_read_articles
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class ContentBasedRecommender:
     def __init__(self, user_interactions: pd.DataFrame, articles_metadata: pd.DataFrame, 
                  embeddings_optimized: np.ndarray, article_id_to_embedding_idx: Dict[int, int], config: Dict):
+        logger.info("Initializing ContentBasedRecommender...")
         self.user_interactions = user_interactions
         self.articles_metadata = articles_metadata
         self.embeddings_optimized = embeddings_optimized
         self.article_id_to_embedding_idx = article_id_to_embedding_idx
         self.config = config
         
-        logging.info("ContentBasedRecommender initialisé.")
+        logger.info("ContentBasedRecommender initialized successfully.")
 
     def _get_article_embedding(self, article_id: int) -> np.ndarray:
         """

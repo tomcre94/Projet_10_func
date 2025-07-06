@@ -6,6 +6,7 @@ import logging
 from typing import List, Dict # Import List and Dict
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def calculate_cosine_similarity(embedding_matrix: np.ndarray, vector: np.ndarray = None) -> np.ndarray:
     """

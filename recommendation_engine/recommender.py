@@ -11,49 +11,59 @@ from .utils import normalize_scores, filter_read_articles, ensure_diversity # Im
 from config import RECOMMENDATION_CONFIG # Assuming config.py is in the root directory
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class RecommendationEngine:
-    def __init__(self, data_path="processed_data/"):
+    def __init__(self, articles_metadata, user_interactions, embeddings, data_summary):
         """
-        Initialise le système de recommandation
-        - Charge les données préparées
-        - Initialise les 3 composants de recommandation
-        - Pré-calcule les matrices/structures nécessaires
+        Initialise le système de recommandation avec les données pré-chargées.
         """
-        logging.info("Initialisation de RecommendationEngine...")
-        self.data_loader = DataLoader(data_path)
-        self.data_loader.load_all_data()
+        logger.info("Initializing RecommendationEngine...")
+        
+        if articles_metadata is None or user_interactions is None or embeddings is None or data_summary is None:
+            raise ValueError("All data components (articles_metadata, user_interactions, embeddings, data_summary) must be provided.")
 
-        self.user_interactions = self.data_loader.get_user_interactions()
-        self.articles_metadata = self.data_loader.get_articles_metadata()
-        self.embeddings_optimized = self.data_loader.get_embeddings_optimized()
-        self.data_summary = self.data_loader.get_data_summary()
-
+        self.articles_metadata = articles_metadata
+        self.user_interactions = user_interactions
+        self.embeddings_optimized = embeddings
+        self.data_summary = data_summary
         self.config = RECOMMENDATION_CONFIG
 
-        # Pré-calculs (à implémenter dans les composants ou ici si global)
-        # Par exemple, un mapping article_id -> index d'embedding
+        logger.info("Data successfully passed to RecommendationEngine.")
+        logger.info(f"Articles metadata shape: {self.articles_metadata.shape}")
+        logger.info(f"User interactions shape: {self.user_interactions.shape}")
+        logger.info(f"Embeddings shape: {self.embeddings_optimized.shape}")
+
+        # Pre-calculations
         self.article_id_to_embedding_idx = {
             article_id: idx for idx, article_id in enumerate(self.articles_metadata['article_id'].tolist())
         }
-        # Inverse mapping for convenience
         self.embedding_idx_to_article_id = {
             idx: article_id for article_id, idx in self.article_id_to_embedding_idx.items()
         }
+        logger.info(f"Created article_id to embedding index mapping for {len(self.article_id_to_embedding_idx)} articles.")
 
-        # Initialisation des composants de recommandation (placeholders for now)
-        self.content_based_recommender = ContentBasedRecommender(
-            self.user_interactions, self.articles_metadata, 
-            self.embeddings_optimized, self.article_id_to_embedding_idx, self.config
-        )
-        self.collaborative_recommender = CollaborativeFilteringRecommender( # Initialize collaborative recommender
-            self.user_interactions, self.articles_metadata, self.config
-        )
-        self.popularity_recommender = PopularityBasedRecommender(
-            self.user_interactions, self.articles_metadata, self.config
-        )
+        # Initialize recommender components
+        try:
+            logger.info("Initializing ContentBasedRecommender...")
+            self.content_based_recommender = ContentBasedRecommender(
+                self.user_interactions, self.articles_metadata, 
+                self.embeddings_optimized, self.article_id_to_embedding_idx, self.config
+            )
+            logger.info("Initializing CollaborativeFilteringRecommender...")
+            self.collaborative_recommender = CollaborativeFilteringRecommender(
+                self.user_interactions, self.articles_metadata, self.config
+            )
+            logger.info("Initializing PopularityBasedRecommender...")
+            self.popularity_recommender = PopularityBasedRecommender(
+                self.user_interactions, self.articles_metadata, self.config
+            )
+            logger.info("All recommender components initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize recommender components: {e}", exc_info=True)
+            raise
 
-        logging.info("RecommendationEngine initialisé.")
+        logger.info("RecommendationEngine initialized successfully.")
     
     def recommend_articles(self, user_id: int, n_recommendations: int = 5) -> List[Dict]:
         """

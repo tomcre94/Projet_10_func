@@ -6,9 +6,11 @@ from typing import List, Dict
 from .utils import normalize_scores, get_top_n, ensure_diversity
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class PopularityBasedRecommender:
     def __init__(self, user_interactions: pd.DataFrame, articles_metadata: pd.DataFrame, config: Dict):
+        logger.info("Initializing PopularityBasedRecommender...")
         self.user_interactions = user_interactions
         self.articles_metadata = articles_metadata
         self.config = config
@@ -16,7 +18,7 @@ class PopularityBasedRecommender:
         self.article_popularity_scores = self._calculate_global_popularity()
         self.category_popularity_scores = self._calculate_category_popularity()
         
-        logging.info("PopularityBasedRecommender initialisé.")
+        logger.info("PopularityBasedRecommender initialized successfully.")
 
     def _calculate_global_popularity(self) -> Dict[int, float]:
         """

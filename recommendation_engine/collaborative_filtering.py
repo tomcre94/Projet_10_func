@@ -7,9 +7,11 @@ from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 from .utils import normalize_scores, filter_read_articles
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class CollaborativeFilteringRecommender:
     def __init__(self, user_interactions: pd.DataFrame, articles_metadata: pd.DataFrame, config: Dict):
+        logger.info("Initializing CollaborativeFilteringRecommender...")
         self.user_interactions = user_interactions
         self.articles_metadata = articles_metadata
         self.config = config
@@ -18,7 +20,7 @@ class CollaborativeFilteringRecommender:
         self.user_article_matrix, self.user_to_idx, self.idx_to_user, \
             self.article_to_idx, self.idx_to_article = self._create_user_article_matrix()
         
-        logging.info("CollaborativeFilteringRecommender initialisé.")
+        logger.info("CollaborativeFilteringRecommender initialized successfully.")
 
     def _create_user_article_matrix(self):
         """
