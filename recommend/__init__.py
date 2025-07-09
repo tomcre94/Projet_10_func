@@ -2,9 +2,11 @@ import logging
 import json
 import os
 import sys
+import pickle
 from typing import Optional, Dict, Any
 
 import azure.functions as func
+from azure.storage.blob import BlobServiceClient
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO)
@@ -19,80 +21,31 @@ logger.info(f"sys.path: {sys.path}")
 # Import conditionnel des modules
 try:
     from recommendation_engine.recommender import RecommendationEngine
-    from recommendation_engine.data_loader import DataLoader
     RECOMMENDATION_MODULES_AVAILABLE = True
     logger.info("Recommendation modules imported successfully")
 except ImportError as e:
     logger.error(f"Recommendation modules not available: {e}")
     RecommendationEngine = None
-    DataLoader = None
     RECOMMENDATION_MODULES_AVAILABLE = False
-
-# Import conditionnel d'Azure Storage
-try:
-    from azure.storage.blob import BlobServiceClient
-    AZURE_STORAGE_AVAILABLE = True
-    logger.info("Azure Storage Blob module imported successfully")
-except ImportError as e:
-    logger.error(f"Azure Storage Blob module not available: {e}")
-    BlobServiceClient = None
-    AZURE_STORAGE_AVAILABLE = False
 
 # Variable globale pour le moteur de recommandation
 recommender_engine: Optional[RecommendationEngine] = None
 
-def load_user_interactions_from_file() -> Optional[Dict[str, Any]]:
+def load_data_from_blob(connection_string, container_name, blob_name, is_pickle=False):
     """
-    Charge les interactions utilisateur depuis un fichier local (fallback).
+    Charge des données depuis un blob Azure.
     """
     try:
-        file_path = os.path.join(parent_dir, 'processed_data', 'user_interactions.json')
-        if os.path.exists(file_path):
-            with open(file_path, 'r', encoding='utf-8') as f:
-                user_interactions = json.load(f)
-            logger.info("User interactions loaded from local file")
-            return user_interactions
-        else:
-            logger.warning(f"Local user interactions file not found: {file_path}")
-            return {}
-    except Exception as e:
-        logger.error(f"Error loading user interactions from file: {e}")
-        return {}
-
-def load_user_interactions_from_blob() -> Optional[Dict[str, Any]]:
-    """
-    Charge les interactions utilisateur depuis Azure Blob Storage.
-    """
-    if not AZURE_STORAGE_AVAILABLE:
-        logger.warning("Azure Storage not available, trying local file fallback")
-        return load_user_interactions_from_file()
-        
-    try:
-        connect_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-        if not connect_str:
-            logger.warning("AZURE_STORAGE_CONNECTION_STRING not set, using local file fallback")
-            return load_user_interactions_from_file()
-        
-        container_name = "userinfosjson"
-        blob_name = "user_interactions.json"
-        
-        logger.info(f"Loading user interactions from blob: {container_name}/{blob_name}")
-        
-        blob_service_client = BlobServiceClient.from_connection_string(connect_str)
-        blob_client = blob_service_client.get_blob_client(
-            container=container_name, 
-            blob=blob_name
-        )
-        
+        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
         blob_data = blob_client.download_blob().readall()
-        user_interactions = json.loads(blob_data.decode('utf-8'))
-        
-        logger.info("User interactions loaded successfully from Blob Storage")
-        return user_interactions
-        
+        if is_pickle:
+            return pickle.loads(blob_data)
+        else:
+            return json.loads(blob_data.decode('utf-8'))
     except Exception as e:
-        logger.warning(f"Error loading from blob, using local fallback: {e}")
-        return load_user_interactions_from_file()
+        logger.error(f"Error loading {blob_name} from blob: {e}", exc_info=True)
+        return None
 
 def initialize_recommendation_engine() -> Optional[RecommendationEngine]:
     """
@@ -108,24 +61,18 @@ def initialize_recommendation_engine() -> Optional[RecommendationEngine]:
         return None
     
     try:
-        data_path = os.path.join(parent_dir, 'processed_data')
-        logger.info(f"Loading local data from: {data_path}")
-        
-        if not os.path.exists(data_path):
-            logger.error(f"Data path does not exist: {data_path}")
-            return None
-        
-        data_loader = DataLoader(data_path)
-        articles_metadata = data_loader.load_articles_metadata()
-        embeddings = data_loader.load_embeddings()
-        data_summary = data_loader.load_data_summary()
-        
-        # Charger user_interactions (avec fallback)
-        user_interactions = load_user_interactions_from_blob()
-        if user_interactions is None:
-            logger.error("Failed to load user interactions")
-            return None
-        
+        connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+        if not connection_string:
+            raise ValueError("AZURE_STORAGE_CONNECTION_STRING environment variable not set.")
+
+        articles_metadata = load_data_from_blob(connection_string, "processed-data", "articles_metadata.json")
+        embeddings = load_data_from_blob(connection_string, "processed-data", "embeddings_optimized.pkl", is_pickle=True)
+        data_summary = load_data_from_blob(connection_string, "processed-data", "data_summary.json")
+        user_interactions = load_data_from_blob(connection_string, "userinfosjson", "user_interactions.json")
+
+        if articles_metadata is None or embeddings is None or data_summary is None or user_interactions is None:
+            raise ValueError("Failed to load one or more data components from Blob Storage.")
+
         recommender_engine = RecommendationEngine(
             articles_metadata=articles_metadata,
             user_interactions=user_interactions,
@@ -234,8 +181,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "user_id": user_id,
                 "n_recommendations": n_recommendations,
                 "recommendations": recommendations,
-                "status": "success",
-                "azure_storage_used": AZURE_STORAGE_AVAILABLE
+                "status": "success"
             }),
             mimetype="application/json",
             status_code=200
