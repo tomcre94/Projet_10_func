@@ -3,10 +3,12 @@ import json
 import os
 import sys
 import pickle
+import gc
 from typing import Optional, Dict, Any
 
 import azure.functions as func
 from azure.storage.blob import BlobServiceClient
+import pandas as pd
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO)
@@ -52,6 +54,17 @@ def load_data_from_blob(connection_string, container_name, blob_name, is_pickle=
         logger.error(f"Error loading {blob_name} from blob: {e}", exc_info=True)
         return None
 
+def optimize_dataframe_memory(df):
+    """
+    Optimise la mémoire utilisée par un DataFrame pandas.
+    """
+    for col in df.columns:
+        if df[col].dtype == 'float64':
+            df[col] = df[col].astype('float32')
+        if df[col].dtype == 'int64':
+            df[col] = df[col].astype('int32')
+    return df
+
 def initialize_recommendation_engine() -> Optional[RecommendationEngine]:
     """
     Initialise le moteur de recommandation avec gestion d'erreurs robuste.
@@ -70,10 +83,17 @@ def initialize_recommendation_engine() -> Optional[RecommendationEngine]:
         if not connection_string:
             raise ValueError("AZURE_STORAGE_CONNECTION_STRING environment variable not set.")
 
-        articles_metadata = load_data_from_blob(connection_string, "processed-data", "articles_metadata.json", is_json_lines=True)
+        articles_metadata_list = load_data_from_blob(connection_string, "processed-data", "articles_metadata.json", is_json_lines=True)
+        articles_metadata = pd.DataFrame(articles_metadata_list)
+        articles_metadata = optimize_dataframe_memory(articles_metadata)
+
         embeddings = load_data_from_blob(connection_string, "processed-data", "embeddings_optimized.pkl", is_pickle=True)
+        
         data_summary = load_data_from_blob(connection_string, "processed-data", "data_summary.json")
-        user_interactions = load_data_from_blob(connection_string, "userinfosjson", "user_interactions.json", is_json_lines=True)
+        
+        user_interactions_list = load_data_from_blob(connection_string, "userinfosjson", "user_interactions.json", is_json_lines=True)
+        user_interactions = pd.DataFrame(user_interactions_list)
+        user_interactions = optimize_dataframe_memory(user_interactions)
 
         if articles_metadata is None or embeddings is None or data_summary is None or user_interactions is None:
             raise ValueError("Failed to load one or more data components from Blob Storage.")
@@ -85,6 +105,11 @@ def initialize_recommendation_engine() -> Optional[RecommendationEngine]:
             data_summary=data_summary
         )
         
+        # Libérer la mémoire
+        del articles_metadata_list
+        del user_interactions_list
+        gc.collect()
+
         logger.info("RecommendationEngine initialized successfully")
         return recommender_engine
         
