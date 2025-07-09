@@ -7,7 +7,6 @@ import gc
 from typing import Optional, Dict, Any
 
 import azure.functions as func
-from azure.storage.blob import BlobServiceClient
 import pandas as pd
 
 # Configuration du logging
@@ -32,27 +31,6 @@ except ImportError as e:
 
 # Variable globale pour le moteur de recommandation
 recommender_engine: Optional[RecommendationEngine] = None
-
-def load_data_from_blob(connection_string, container_name, blob_name, is_pickle=False, is_json_lines=False):
-    """
-    Charge des données depuis un blob Azure.
-    """
-    try:
-        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-        blob_data = blob_client.download_blob().readall()
-        if is_pickle:
-            return pickle.loads(blob_data)
-        elif is_json_lines:
-            data = []
-            for line in blob_data.decode('utf-8').splitlines():
-                data.append(json.loads(line))
-            return data
-        else:
-            return json.loads(blob_data.decode('utf-8'))
-    except Exception as e:
-        logger.error(f"Error loading {blob_name} from blob: {e}", exc_info=True)
-        return None
 
 def optimize_dataframe_memory(df):
     """
@@ -79,24 +57,30 @@ def initialize_recommendation_engine() -> Optional[RecommendationEngine]:
         return None
     
     try:
-        connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-        if not connection_string:
-            raise ValueError("AZURE_STORAGE_CONNECTION_STRING environment variable not set.")
-
-        articles_metadata_list = load_data_from_blob(connection_string, "processed-data", "articles_metadata.json", is_json_lines=True)
+        data_path = os.path.join(parent_dir, 'processed_data')
+        
+        articles_metadata_path = os.path.join(data_path, 'articles_metadata.json')
+        with open(articles_metadata_path, 'r') as f:
+            articles_metadata_list = [json.loads(line) for line in f]
         articles_metadata = pd.DataFrame(articles_metadata_list)
         articles_metadata = optimize_dataframe_memory(articles_metadata)
 
-        embeddings = load_data_from_blob(connection_string, "processed-data", "embeddings_optimized.pkl", is_pickle=True)
+        embeddings_path = os.path.join(data_path, 'embeddings_optimized.pkl')
+        with open(embeddings_path, 'rb') as f:
+            embeddings = pickle.load(f)
         
-        data_summary = load_data_from_blob(connection_string, "processed-data", "data_summary.json")
+        data_summary_path = os.path.join(data_path, 'data_summary.json')
+        with open(data_summary_path, 'r') as f:
+            data_summary = json.load(f)
         
-        user_interactions_list = load_data_from_blob(connection_string, "userinfosjson", "user_interactions.json", is_json_lines=True)
+        user_interactions_path = os.path.join(data_path, 'user_interactions.json')
+        with open(user_interactions_path, 'r') as f:
+            user_interactions_list = [json.loads(line) for line in f]
         user_interactions = pd.DataFrame(user_interactions_list)
         user_interactions = optimize_dataframe_memory(user_interactions)
 
         if articles_metadata is None or embeddings is None or data_summary is None or user_interactions is None:
-            raise ValueError("Failed to load one or more data components from Blob Storage.")
+            raise ValueError("Failed to load one or more data components from local files.")
 
         recommender_engine = RecommendationEngine(
             articles_metadata=articles_metadata,

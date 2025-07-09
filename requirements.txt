@@ -7,5 +7,5 @@ uvicorn
 streamlit
 requests
 azure-functions
-azure-storage-blob>=12.19.0
+azure-storage-blob
 pandas
