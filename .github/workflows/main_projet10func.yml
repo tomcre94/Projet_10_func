@@ -1,3 +1,7 @@
+# Docs for the Azure Web Apps Deploy action: https://github.com/azure/functions-action
+# More GitHub Actions for Azure: https://github.com/Azure/actions
+# More info on Python, GitHub Actions, and Azure Functions: https://aka.ms/python-webapps-actions
+
 name: Build and deploy Python project to Azure Function App - Projet10func
 
 on:
@@ -7,15 +11,14 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_FUNCTIONAPP_PACKAGE_PATH: '.' # Dossier racine du projet
-  PYTHON_VERSION: '3.11'
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: '.' # set this to the path to your web app project, defaults to the repository root
+  PYTHON_VERSION: '3.11' # set this to the python version to use (supports 3.6, 3.7, 3.8)
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
-      contents: read
+      contents: read #This is required for actions/checkout
 
     steps:
       - name: Checkout repository
@@ -26,20 +29,55 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # Facultatif : vérifie que requirements.txt est bien présent
-      - name: Verify requirements.txt
-        run: test -f requirements.txt || (echo "requirements.txt missing!" && exit 1)
+      - name: Create and start virtual environment
+        run: |
+          python -m venv venv
+          source venv/bin/activate
 
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Optional: Add step to run tests here
+
+      - name: Zip artifact for deployment
+        run: zip release.zip ./* -r
+
+      - name: Upload artifact for deployment job
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-app
+          path: |
+            release.zip
+            !venv/
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      id-token: write #This is required for requesting the JWT
+      contents: read #This is required for actions/checkout
+
+    steps:
+      - name: Download artifact from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: python-app
+
+      - name: Unzip artifact for deployment
+        run: unzip release.zip     
+        
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_2A9983AE5D734D6DAA10AD61EE35CCE8 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_2D3F3A0372A848A1B73872A3998EFC39 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_113560A5ADFE481BB6F9D126789BFC4F }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_A25262E235E341CEA193D6BDE43B223A }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_683C2ABD49F44492915E26A6920CE4C1 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_6AC903D107064EE899C4280606488377 }}
 
-      - name: Deploy to Azure Functions
+      - name: 'Deploy to Azure Functions'
         uses: Azure/functions-action@v1
+        id: deploy-to-function
         with:
           app-name: 'Projet10func'
           slot-name: 'Production'
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+          
