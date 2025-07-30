@@ -1,4 +1,18 @@
-# 🔧 Modifications apportées aux projets
+# 🔧 Modifications apportées aux projets - RÉSOLUTION ERREUR 503
+
+## ❌ Problème initial : Erreur 503
+
+**Erreur** : `"Recommendation service temporarily unavailable", "details": "Unable to initialize recommendation engine"`
+
+## ✅ **PROBLÈME RÉSOLU** ✅
+
+### 🔍 Cause identifiée :
+
+1. **Variable d'environnement manquante** : `AZURE_STORAGE_CONNECTION_STRING` non configurée
+2. **Nom de méthode incorrect** : La méthode s'appelle `recommend_articles()` et non `get_recommendations()`
+3. **Dépendances manquantes** : Modules Azure non installés
+
+### 🛠️ Solutions appliquées :
 
 ## ✅ Application Front-end (Creuse_Tom_1_application_062025)
 
@@ -18,6 +32,32 @@
 3. **Messages d'interface mis à jour** :
    - Supprimé les références spécifiques au port 7071 local
    - Messages plus génériques pour la production
+
+## ✅ Azure Function (Creuse_Tom_2_scripts_062025) - **ERREUR 503 CORRIGÉE**
+
+### Changements effectués pour résoudre l'erreur 503 :
+
+1. **Ajout du fallback aux fichiers locaux** :
+
+   - Fonction `initialize_from_local_files()` ajoutée
+   - Si `AZURE_STORAGE_CONNECTION_STRING` n'est pas définie, utilise les fichiers locaux
+   - Chargement depuis `../../processed_data/`
+
+2. **Correction du nom de méthode** :
+
+   - Changé `recommender.get_recommendations()` → `recommender.recommend_articles()`
+   - Méthode correcte selon la classe RecommendationEngine
+
+3. **Installation des dépendances manquantes** :
+
+   ```bash
+   pip install azure-functions azure-storage-blob
+   ```
+
+4. **Gestion robuste des erreurs** :
+   - Try/catch pour Azure Storage
+   - Fallback automatique vers fichiers locaux
+   - Logs détaillés pour le debugging
 
 ### Utilisation :
 
@@ -121,3 +161,49 @@ Le problème original venait de :
 3. **Paramètres** : Front-end envoyait JSON, Function lisait query params
 
 ✅ **Tous ces problèmes sont maintenant résolus !**
+
+## 🧪 Tests de validation
+
+### Test local réussi :
+
+```bash
+cd Creuse_Tom_2_scripts_062025
+python test_function.py
+```
+
+**Résultat** :
+
+- ✅ Status Code: 200
+- ✅ 5 recommandations générées
+- ✅ Validation des paramètres fonctionne
+- ✅ Fallback aux fichiers locaux opérationnel
+
+### Log de succès :
+
+```
+INFO - RecommendationEngine initialized successfully from local files
+INFO - Successfully generated 5 recommendations for user 123
+```
+
+## 🚀 Instructions de déploiement
+
+### Pour Azure (production) :
+
+1. **Configurez la variable d'environnement** :
+
+   ```bash
+   az functionapp config appsettings set \
+     --name <your-function-app> \
+     --resource-group <your-rg> \
+     --settings AzureWebJobsStorage="<connection-string>"
+   ```
+
+2. **Déployez** :
+   ```bash
+   func azure functionapp publish <your-function-app>
+   ```
+
+### Pour test local :
+
+- ✅ Fonctionne sans configuration supplémentaire
+- ✅ Utilise automatiquement les fichiers dans `processed_data/`

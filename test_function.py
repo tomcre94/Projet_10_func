@@ -23,7 +23,8 @@ try:
             url='http://localhost:7071/api/recommend?user_id=123&n_recommendations=5',
             headers={},
             params={'user_id': '123', 'n_recommendations': '5'},
-            route_params={}
+            route_params={},
+            body=b''
         )
         
         print("📤 Envoi de la requête de test...")
@@ -63,7 +64,8 @@ try:
             url='http://localhost:7071/api/recommend',
             headers={},
             params={},
-            route_params={}
+            route_params={},
+            body=b''
         )
         
         response = main(test_req)
