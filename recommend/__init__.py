@@ -261,10 +261,25 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     mimetype="application/json"
                 )
             
-            # Préparer la réponse
+            # Préparer la réponse avec conversion des types numpy
+            def convert_numpy_types(obj):
+                """Convertit les types numpy en types Python natifs pour la sérialisation JSON"""
+                if isinstance(obj, dict):
+                    return {key: convert_numpy_types(value) for key, value in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_numpy_types(item) for item in obj]
+                elif isinstance(obj, (np.int32, np.int64)):
+                    return int(obj)
+                elif isinstance(obj, (np.float32, np.float64)):
+                    return float(obj)
+                elif isinstance(obj, np.bool_):
+                    return bool(obj)
+                else:
+                    return obj
+            
             response_data = {
-                "user_id": user_id,
-                "recommendations": recommendations,
+                "user_id": int(user_id),  # Assurer que c'est un int Python
+                "recommendations": convert_numpy_types(recommendations),
                 "count": len(recommendations),
                 "message": "Recommendations generated successfully"
             }
