@@ -1,9 +1,54 @@
+import azure.functions as func
+import logging
+import json
+import os
+import pandas as pd
+import numpy as np
+import pickle
+import gc
+from typing import Optional, List, Dict
 from azure.storage.blob import BlobServiceClient
 from io import BytesIO
+
+# Variables globales
+recommender_engine = None
+logger = logging.getLogger(__name__)
+
+# Flag pour vérifier la disponibilité des modules
+RECOMMENDATION_MODULES_AVAILABLE = True
+
+try:
+    # Import des classes du moteur de recommandation
+    import sys
+    import os
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+    from recommendation_engine.recommender import RecommendationEngine
+    from config import RECOMMENDATION_CONFIG
+    logger.info("Successfully imported RecommendationEngine and config")
+except ImportError as e:
+    logger.warning(f"Recommendation modules not available: {e}")
+    RECOMMENDATION_MODULES_AVAILABLE = False
+    # Configuration par défaut si l'import échoue
+    RECOMMENDATION_CONFIG = {
+        'weights': {
+            'content_based': 0.4,
+            'collaborative': 0.3, 
+            'popularity': 0.3
+        }
+    }
 
 # Informations de connexion Azure
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
 CONTAINER_NAME = "processed-data"
+
+def optimize_dataframe_memory(df):
+    """Optimise la mémoire utilisée par un DataFrame pandas."""
+    for col in df.columns:
+        if df[col].dtype == 'float64':
+            df[col] = df[col].astype('float32')
+        if df[col].dtype == 'int64':
+            df[col] = df[col].astype('int32')
+    return df
 
 def download_blob_as_text(blob_service_client, blob_name):
     blob_client = blob_service_client.get_blob_client(container=CONTAINER_NAME, blob=blob_name)
@@ -64,3 +109,116 @@ def initialize_recommendation_engine() -> Optional[RecommendationEngine]:
     except Exception as e:
         logger.error(f"Error initializing RecommendationEngine from Azure: {e}", exc_info=True)
         return None
+
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Point d'entrée principal de l'Azure Function pour les recommandations.
+    Utilise les paramètres GET et ne nécessite pas d'authentification.
+    """
+    try:
+        logger.info('Azure Function started - Recommendation request received')
+        
+        # Récupérer les paramètres depuis la query string
+        user_id = req.params.get('user_id')
+        n_recommendations = req.params.get('n_recommendations', '5')
+        
+        # Validation des paramètres
+        if not user_id:
+            logger.warning('Missing user_id parameter')
+            return func.HttpResponse(
+                json.dumps({
+                    "error": "user_id parameter is required",
+                    "usage": "GET /api/recommend?user_id=123&n_recommendations=5"
+                }),
+                status_code=400,
+                mimetype="application/json"
+            )
+        
+        try:
+            user_id = int(user_id)
+            n_recommendations = int(n_recommendations)
+            
+            # Limiter le nombre de recommandations
+            if n_recommendations < 1 or n_recommendations > 50:
+                n_recommendations = 5
+                
+        except ValueError:
+            logger.warning(f'Invalid parameter types: user_id={user_id}, n_recommendations={n_recommendations}')
+            return func.HttpResponse(
+                json.dumps({
+                    "error": "user_id and n_recommendations must be valid integers"
+                }),
+                status_code=400,
+                mimetype="application/json"
+            )
+        
+        logger.info(f'Processing request for user_id={user_id}, n_recommendations={n_recommendations}')
+        
+        # Initialiser le moteur de recommandation
+        recommender = initialize_recommendation_engine()
+        if not recommender:
+            logger.error('Failed to initialize recommendation engine')
+            return func.HttpResponse(
+                json.dumps({
+                    "error": "Recommendation service temporarily unavailable",
+                    "details": "Unable to initialize recommendation engine"
+                }),
+                status_code=503,
+                mimetype="application/json"
+            )
+        
+        # Générer les recommandations
+        try:
+            recommendations = recommender.get_recommendations(user_id, n_recommendations)
+            
+            if not recommendations:
+                logger.info(f'No recommendations found for user {user_id}')
+                return func.HttpResponse(
+                    json.dumps({
+                        "user_id": user_id,
+                        "recommendations": [],
+                        "count": 0,
+                        "message": "No recommendations available for this user"
+                    }),
+                    status_code=200,
+                    mimetype="application/json"
+                )
+            
+            # Préparer la réponse
+            response_data = {
+                "user_id": user_id,
+                "recommendations": recommendations,
+                "count": len(recommendations),
+                "message": "Recommendations generated successfully"
+            }
+            
+            logger.info(f'Successfully generated {len(recommendations)} recommendations for user {user_id}')
+            
+            return func.HttpResponse(
+                json.dumps(response_data, ensure_ascii=False),
+                status_code=200,
+                mimetype="application/json"
+            )
+            
+        except Exception as rec_error:
+            logger.error(f'Error generating recommendations: {str(rec_error)}', exc_info=True)
+            return func.HttpResponse(
+                json.dumps({
+                    "error": "Failed to generate recommendations",
+                    "details": str(rec_error)
+                }),
+                status_code=500,
+                mimetype="application/json"
+            )
+    
+    except Exception as e:
+        logger.error(f'Unexpected error in main function: {str(e)}', exc_info=True)
+        return func.HttpResponse(
+            json.dumps({
+                "error": "Internal server error",
+                "details": str(e)
+            }),
+            status_code=500,
+            mimetype="application/json"
+        )
